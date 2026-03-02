@@ -6,6 +6,8 @@ import streamlit as st
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
@@ -18,9 +20,8 @@ st.title("Sistema Preditivo de Obesidade")
 DATA_PATH = "Obesity.csv"
 
 if not os.path.exists(DATA_PATH):
-    st.error(f"Arquivo `{DATA_PATH}` não encontrado no repositório.")
+    st.error(f"Arquivo `{DATA_PATH}` não encontrado na raiz do repositório.")
     st.stop()
-
 
 # =========================
 # Pré-processamento
@@ -39,16 +40,12 @@ class RoundColumns(BaseEstimator, TransformerMixin):
                 Xc[c] = np.round(Xc[c]).astype(float)
         return Xc
 
-
 @st.cache_data
 def load_dataset(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
-
+    return pd.read_csv(path)
 
 @st.cache_resource
-def train_model(df: pd.DataFrame) -> Pipeline:
-    # Separar X/y
+def train_model_with_holdout(df: pd.DataFrame):
     if "Obesity" not in df.columns:
         raise ValueError("Coluna 'Obesity' não encontrada no dataset.")
 
@@ -57,6 +54,10 @@ def train_model(df: pd.DataFrame) -> Pipeline:
 
     numeric_cols = ["Age", "Height", "Weight", "FCVC", "NCP", "CH2O", "FAF", "TUE"]
     cat_cols = [c for c in X.columns if c not in numeric_cols]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
     preprocess = Pipeline(steps=[
         ("rounder", RoundColumns(["FCVC", "NCP", "CH2O", "FAF", "TUE"])),
@@ -70,10 +71,11 @@ def train_model(df: pd.DataFrame) -> Pipeline:
     ])
 
     model = RandomForestClassifier(
-        n_estimators=400,
+        n_estimators=500,
         max_features="sqrt",
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
+        class_weight=None
     )
 
     pipe = Pipeline(steps=[
@@ -81,19 +83,22 @@ def train_model(df: pd.DataFrame) -> Pipeline:
         ("model", model),
     ])
 
-    pipe.fit(X, y)
-    return pipe
+    pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
+    acc = float(accuracy_score(y_test, y_pred))
 
+    return pipe, acc
 
 df = load_dataset(DATA_PATH)
 
-with st.spinner("Preparando modelo (primeira vez pode demorar um pouco)..."):
-    model = train_model(df)
+with st.spinner("Treinando modelo (pode levar alguns segundos na primeira execução)..."):
+    model, acc = train_model_with_holdout(df)
 
-st.caption("Triagem preditiva com base em hábitos e medidas. Não substitui avaliação clínica.")
+st.metric("Acurácia (hold-out 20%)", f"{acc:.3f}")
+st.caption("Predição para triagem. Não substitui avaliação clínica.")
 
 # =========================
-# Formulário
+# Inputs (form)
 # =========================
 col1, col2, col3 = st.columns(3)
 
